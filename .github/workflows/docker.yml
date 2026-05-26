@@ -1,0 +1,76 @@
+name: Build and Push Docker image
+
+on:
+  push:
+    branches:
+      - '**'
+  release:
+    types: [published, edited]
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/socks5-proxy-server
+
+jobs:
+  test:
+    name: Test Go code
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run tests
+        run: go test ./...
+      - name: Run race tests
+        run: go test -race ./...
+      - name: Run vet
+        run: go vet ./...
+      - name: Run golangci-lint
+        run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 run ./...
+
+  hadolint:
+    name: Lint Dockerfile
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Run hadolint
+        uses: hadolint/hadolint-action@v3.2.0
+        with:
+          ignore: DL3018
+
+  build-and-push:
+    needs:
+      - test
+      - hadolint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set image tag
+        id: meta
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/master" ]; then
+            echo "tag=latest" >> $GITHUB_OUTPUT
+          else
+            BRANCH=$(echo ${{ github.ref_name }} | sed 's/[^a-zA-Z0-9._-]/-/g')
+            echo "tag=${BRANCH}-${{ github.sha }}" >> $GITHUB_OUTPUT
+          fi
+      - name: Build Docker image
+        run: |
+          docker build -t $IMAGE_NAME:${{ steps.meta.outputs.tag }} .
+      - name: Push Docker image
+        run: |
+          docker push $IMAGE_NAME:${{ steps.meta.outputs.tag }}

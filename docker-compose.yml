@@ -1,0 +1,7 @@
+services:
+  socks5-proxy-server:
+    restart: always
+    image: ghcr.io/astronaut808/socks5-proxy-server:latest
+    env_file: .env
+    ports:
+      - "1080:1080"

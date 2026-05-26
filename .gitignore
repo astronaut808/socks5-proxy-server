@@ -1,0 +1,6 @@
+.env
+.idea
+coverage.out
+*.test
+/socks5
+/socks5-proxy-server

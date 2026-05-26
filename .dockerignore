@@ -1,0 +1,12 @@
+.git
+.github
+.env
+.idea
+vendor
+Dockerfile
+docker-compose*.yml
+Changelog.md
+README.md
+LICENSE
+*.test
+coverage.out

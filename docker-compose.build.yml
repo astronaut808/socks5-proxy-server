@@ -1,0 +1,10 @@
+services:
+  socks5-proxy-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: socks5-proxy-server
+    env_file: .env
+    ports:
+      - "1080:1080"
+    restart: unless-stopped
