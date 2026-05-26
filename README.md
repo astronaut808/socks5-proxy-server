@@ -2,11 +2,13 @@
 
 ![Build and Push Docker image](https://github.com/astronaut808/socks5-proxy-server/actions/workflows/docker.yml/badge.svg)
 
-Small SOCKS5 proxy built on `go-socks5` and Go 1.26.3. It supports password authentication, multiple accounts, source IP allowlists, destination FQDN access policies, connection limits, rate limiting, plain SOCKS5, SOCKS5 over TLS, and optional mutual TLS.
+[English documentation](README.en.md)
 
-## Quick Start
+Небольшой SOCKS5 proxy server на `go-socks5` и Go 1.26.3. Поддерживает аутентификацию по логину и паролю, несколько аккаунтов, allowlist по исходным IP, политики доступа по FQDN назначения, лимиты соединений, rate limiting, обычный SOCKS5, SOCKS5 over TLS и опциональный mutual TLS.
 
-Run with one username and password:
+## Быстрый старт
+
+Запуск с одним пользователем и паролем:
 
 ```bash
 docker run -d --name socks5 \
@@ -16,7 +18,7 @@ docker run -d --name socks5 \
   ghcr.io/astronaut808/socks5-proxy-server:latest
 ```
 
-Run on a custom container port:
+Запуск на другом порту внутри контейнера:
 
 ```bash
 docker run -d --name socks5 \
@@ -27,54 +29,54 @@ docker run -d --name socks5 \
   ghcr.io/astronaut808/socks5-proxy-server:latest
 ```
 
-Test through the proxy:
+Проверка через proxy:
 
 ```bash
 curl --socks5 <proxy-host>:1080 -U <user>:<password> https://ipinfo.io
 ```
 
-## Configuration
+## Конфигурация
 
-| ENV variable | Type | Default | Required | Description |
+| Переменная | Тип | По умолчанию | Обязательность | Описание |
 | --- | --- | --- | --- | --- |
-| `REQUIRE_AUTH` | Boolean | `true` | no | Require SOCKS5 username/password authentication. Disabling this is not recommended unless another control protects the proxy. |
-| `PROXY_USER` | String | empty | conditional | Single proxy username, required with `PROXY_PASSWORD` when `REQUIRE_AUTH=true` and `PROXY_ACCOUNTS` is empty. |
-| `PROXY_PASSWORD` | String | empty | conditional | Single proxy password, required with `PROXY_USER` when `REQUIRE_AUTH=true` and `PROXY_ACCOUNTS` is empty. The plaintext value is hashed in memory at startup. |
-| `PROXY_ACCOUNTS` | String | empty | conditional | Comma-separated `user:password` or `user:bcrypt-hash` entries. Required when `REQUIRE_AUTH=true` and single-user credentials are not set. |
-| `ENABLE_PLAIN` | Boolean | `false` | no | Keep the plain SOCKS5 listener enabled when TLS is enabled. |
-| `PROXY_PORT` | String | `1080` | no | Plain SOCKS5 listen port. Must be 1-65535. |
-| `PROXY_LISTEN_IP` | String | `0.0.0.0` | no | Listen address. Use `127.0.0.1` for local-only access. |
-| `ALLOWED_DEST_FQDN` | String | empty | no | Destination FQDN regular expression. Empty allows all destinations. Prefer anchored regexes such as `^api\.example\.com$`. |
-| `ALLOWED_IPS` | String | empty | no | Comma-separated source IP allowlist. |
-| `MAX_CONNECTIONS` | Int | `100` | no | Maximum concurrent client connections. Must be greater than zero. |
-| `TIMEOUT` | Int | `300` | no | Read/write timeout in seconds. Must be greater than zero. |
-| `MAX_AUTH_FAILURES` | Int | `5` | no | Failed authentication attempts before temporary lockout. Must be greater than zero. |
-| `AUTH_LOCKOUT` | Int | `300` | no | Lockout duration in seconds. Must be greater than zero. |
-| `RATE_LIMIT_PER_SEC` | Int | `10` | no | New connection rate limit. Burst limit is 2x this value. Must be greater than zero. |
-| `TLS_ENABLED` | Boolean | `false` | no | Enable SOCKS5 over TLS. |
-| `TLS_PORT` | String | `10443` | no | TLS listener port. Must be 1-65535. |
-| `TLS_CERT_FILE` | String | empty | conditional | TLS certificate file path in PEM format. Required when `TLS_ENABLED=true`. |
-| `TLS_KEY_FILE` | String | empty | conditional | TLS private key file path in PEM format. Required when `TLS_ENABLED=true`. |
-| `TLS_CLIENT_AUTH` | Boolean | `false` | no | Require client certificate authentication. |
-| `TLS_CLIENT_CA_FILE` | String | empty | conditional | PEM file with CA certificates used to validate client certificates. Required when `TLS_CLIENT_AUTH=true`. |
-| `TLS_MIN_VERSION` | String | `1.2` | no | Minimum TLS version. Supported values: `1.2`, `1.3`. |
-| `METRICS_ADDR` | String | empty | no | Optional `host:port` address for the standard Go `expvar` endpoint at `/debug/vars`. Empty disables metrics. |
+| `REQUIRE_AUTH` | Boolean | `true` | нет | Требовать SOCKS5-аутентификацию по логину и паролю. Отключать не рекомендуется, если proxy не защищён другим способом. |
+| `PROXY_USER` | String | пусто | условно | Логин для одного пользователя. Нужен вместе с `PROXY_PASSWORD`, когда `REQUIRE_AUTH=true` и `PROXY_ACCOUNTS` пустой. |
+| `PROXY_PASSWORD` | String | пусто | условно | Пароль для одного пользователя. Нужен вместе с `PROXY_USER`, когда `REQUIRE_AUTH=true` и `PROXY_ACCOUNTS` пустой. Plaintext-пароль хэшируется в памяти при запуске. |
+| `PROXY_ACCOUNTS` | String | пусто | условно | Список аккаунтов через запятую в формате `user:password` или `user:bcrypt-hash`. Нужен, когда `REQUIRE_AUTH=true` и одиночные credentials не заданы. |
+| `ENABLE_PLAIN` | Boolean | `false` | нет | Оставить обычный SOCKS5 listener включённым, когда включён TLS. |
+| `PROXY_PORT` | String | `1080` | нет | Порт обычного SOCKS5 listener. Значение должно быть от 1 до 65535. |
+| `PROXY_LISTEN_IP` | String | `0.0.0.0` | нет | Адрес прослушивания. Для доступа только с локальной машины используйте `127.0.0.1`. |
+| `ALLOWED_DEST_FQDN` | String | пусто | нет | Регулярное выражение для FQDN назначения. Пустое значение разрешает все направления. Лучше использовать anchored regex, например `^api\.example\.com$`. |
+| `ALLOWED_IPS` | String | пусто | нет | Allowlist исходных IP-адресов через запятую. |
+| `MAX_CONNECTIONS` | Int | `100` | нет | Максимальное количество одновременных клиентских соединений. Должно быть больше нуля. |
+| `TIMEOUT` | Int | `300` | нет | Read/write timeout в секундах. Должен быть больше нуля. |
+| `MAX_AUTH_FAILURES` | Int | `5` | нет | Количество неудачных попыток аутентификации до временной блокировки. Должно быть больше нуля. |
+| `AUTH_LOCKOUT` | Int | `300` | нет | Длительность блокировки в секундах. Должна быть больше нуля. |
+| `RATE_LIMIT_PER_SEC` | Int | `10` | нет | Лимит новых соединений в секунду. Burst равен 2x от этого значения. Должен быть больше нуля. |
+| `TLS_ENABLED` | Boolean | `false` | нет | Включить SOCKS5 over TLS. |
+| `TLS_PORT` | String | `10443` | нет | Порт TLS listener. Значение должно быть от 1 до 65535. |
+| `TLS_CERT_FILE` | String | пусто | условно | Путь к TLS-сертификату в PEM-формате. Нужен, когда `TLS_ENABLED=true`. |
+| `TLS_KEY_FILE` | String | пусто | условно | Путь к приватному TLS-ключу в PEM-формате. Нужен, когда `TLS_ENABLED=true`. |
+| `TLS_CLIENT_AUTH` | Boolean | `false` | нет | Требовать клиентский сертификат для TLS-подключений. |
+| `TLS_CLIENT_CA_FILE` | String | пусто | условно | PEM-файл с CA для проверки клиентских сертификатов. Нужен, когда `TLS_CLIENT_AUTH=true`. |
+| `TLS_MIN_VERSION` | String | `1.2` | нет | Минимальная версия TLS. Поддерживаются `1.2` и `1.3`. |
+| `METRICS_ADDR` | String | пусто | нет | Опциональный адрес `host:port` для стандартного Go `expvar` endpoint на `/debug/vars`. Пустое значение отключает метрики. |
 
-## Examples
+## Примеры
 
-Restrict destinations to specific domains:
+Ограничить направления конкретными доменами:
 
 ```bash
 ALLOWED_DEST_FQDN='^.*\.(example\.com|internal\.local)$'
 ```
 
-Allow only specific client IPs:
+Разрешить доступ только с конкретных клиентских IP:
 
 ```bash
 ALLOWED_IPS=192.168.1.10,10.0.0.5
 ```
 
-Enable TLS:
+Включить TLS:
 
 ```bash
 TLS_ENABLED=true
@@ -84,7 +86,7 @@ TLS_KEY_FILE=/etc/ssl/private/proxy.key
 TLS_MIN_VERSION=1.3
 ```
 
-Run with TLS certificates mounted:
+Запуск с примонтированными TLS-сертификатами:
 
 ```bash
 docker run -d --name socks5-tls \
@@ -98,24 +100,24 @@ docker run -d --name socks5-tls \
   ghcr.io/astronaut808/socks5-proxy-server:latest
 ```
 
-Clients must establish TLS first, then speak SOCKS5 over that encrypted connection. One simple local wrapper for testing is `socat`:
+При SOCKS5 over TLS обычный SOCKS5-трафик передаётся внутри защищённого TLS-соединения. Если SOCKS5-клиент не умеет TLS напрямую, можно сделать локальную TLS-обёртку через `socat`:
 
 ```bash
 socat TCP-LISTEN:1080,reuseaddr,fork OPENSSL:<server-ip>:10443,verify=0
 curl --socks5 localhost:1080 -U <user>:<password> https://ipinfo.io
 ```
 
-## Development
+## Разработка
 
-Project layout:
+Структура проекта:
 
 ```text
-cmd/socks5-proxy-server/    application entrypoint
-internal/proxy/       config, auth, access policy, listeners, TLS, metrics, server orchestration
-.github/workflows/    CI and image publishing
+cmd/socks5-proxy-server/    entrypoint приложения
+internal/proxy/             config, auth, access policy, listeners, TLS, metrics, server orchestration
+.github/workflows/          CI и публикация Docker image
 ```
 
-Run local checks:
+Локальные проверки:
 
 ```bash
 go test ./...
@@ -124,28 +126,26 @@ go vet ./...
 golangci-lint run ./...
 ```
 
-Build a local binary:
+Сборка локального бинарника:
 
 ```bash
 go build ./cmd/socks5-proxy-server
 ```
 
-Enable local metrics while developing:
+Включить локальные метрики при разработке:
 
 ```bash
 METRICS_ADDR=127.0.0.1:9090 go run ./cmd/socks5-proxy-server
 curl http://127.0.0.1:9090/debug/vars
 ```
 
-Build and run with Docker Compose:
+Сборка и запуск через Docker Compose:
 
 ```bash
 cp .env.example .env
 docker compose -f docker-compose.build.yml up -d --build
 ```
 
-## Production Notes
+## Production
 
-Keep authentication enabled, prefer TLS or mTLS for untrusted networks, bind to `127.0.0.1` when exposing the proxy only through a tunnel, and use firewall rules in addition to `ALLOWED_IPS` for public hosts. Avoid broad destination regexes unless intentionally running an open egress proxy.
-
-The repository does not vendor dependencies. Go modules, Dependabot, `cleanenv`, and CI keep dependency updates visible and reproducible through `go.mod` and `go.sum`.
+Оставляйте аутентификацию включённой, используйте TLS или mTLS в недоверенных сетях, привязывайте proxy к `127.0.0.1`, если он доступен только через туннель, и дополняйте `ALLOWED_IPS` правилами firewall на хосте. Избегайте слишком широких regex для направлений, если вы не хотите получить открытый egress proxy.
