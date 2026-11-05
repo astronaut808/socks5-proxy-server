@@ -118,22 +118,23 @@ func openListeners(cfg Config, stats listenerStats, logger *log.Logger) ([]net.L
 	return listeners, nil
 }
 
-// wrapListener applies connection limits and rate limiting, then the
-// ALLOWED_IPS source filter as the outermost layer. The filter replaces the
-// IP whitelist hook of the previous go-socks5 library, which has no
-// equivalent in things-go/go-socks5.
+// wrapListener applies the ALLOWED_IPS source filter as the innermost layer,
+// then wraps it with connection limits and rate limiting. Filtering source
+// IPs first ensures rejected connections never consume rate-limit tokens or
+// connection slots and are not counted as accepted connections. The filter
+// replaces the IP whitelist hook of the previous go-socks5 library, which
+// has no equivalent in things-go/go-socks5.
 func wrapListener(listener net.Listener, cfg Config, stats listenerStats, logger *log.Logger) net.Listener {
-	limited := newLimitedListener(
+	if len(cfg.AllowedIPs) > 0 {
+		listener = newAllowedIPsListener(listener, parseIPs(cfg.AllowedIPs), logger)
+	}
+	return newLimitedListener(
 		listener,
 		cfg.MaxConnections,
 		cfg.RateLimit,
 		cfg.TimeoutDuration(),
 		stats,
 	)
-	if len(cfg.AllowedIPs) > 0 {
-		return newAllowedIPsListener(limited, parseIPs(cfg.AllowedIPs), logger)
-	}
-	return limited
 }
 
 func serve(ctx context.Context, server *socks5.Server, listeners []net.Listener, logger *log.Logger) error {

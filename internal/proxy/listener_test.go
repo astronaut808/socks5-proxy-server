@@ -257,6 +257,67 @@ func TestAllowedIPsListenerWithoutLogger(t *testing.T) {
 	}
 }
 
+// TestWrapListenerFiltersDisallowedIPsBeforeRateLimit proves the ALLOWED_IPS
+// filter runs inside the rate/connection limiter: rejected source IPs must
+// not consume rate-limit tokens or connection slots and must not increment
+// accepted-connection metrics, while allowed IPs still do.
+func TestWrapListenerFiltersDisallowedIPsBeforeRateLimit(t *testing.T) {
+	rejected1 := newRemoteAddrConn(t, &net.TCPAddr{IP: net.ParseIP("198.51.100.1"), Port: 1})
+	rejected2 := newRemoteAddrConn(t, &net.TCPAddr{IP: net.ParseIP("198.51.100.2"), Port: 2})
+	allowed := newRemoteAddrConn(t, &net.TCPAddr{IP: net.ParseIP("192.0.2.1"), Port: 3})
+	stats := &fakeStats{}
+	cfg := Config{
+		AllowedIPs:     []string{"192.0.2.1"},
+		MaxConnections: 10,
+		Timeout:        1,
+		RateLimit:      1,
+	}
+	listener := wrapListener(
+		&queueListener{conns: []net.Conn{rejected1, rejected2, allowed}},
+		cfg, stats, log.New(io.Discard, "", 0),
+	)
+
+	conn, err := listener.Accept()
+	if err != nil {
+		t.Fatalf("accept: %v", err)
+	}
+	if conn.RemoteAddr() != allowed.remote {
+		t.Fatalf("accepted remote = %v, want %v", conn.RemoteAddr(), allowed.remote)
+	}
+	if stats.accepted != 1 {
+		t.Fatalf("accepted stats = %d, want 1 (disallowed IPs must not count)", stats.accepted)
+	}
+	for _, rejected := range []*remoteAddrConn{rejected1, rejected2} {
+		select {
+		case <-rejected.closed:
+		default:
+			t.Fatalf("rejected connection from %s was not closed", rejected.remote)
+		}
+	}
+	limited, ok := listener.(*limitedListener)
+	if !ok {
+		t.Fatalf("wrapListener returned %T, want *limitedListener", listener)
+	}
+	if got := len(limited.limit); got != 1 {
+		t.Fatalf("connection slots held = %d, want 1 (only the allowed connection)", got)
+	}
+	// Burst is RateLimit*2 = 2; exactly one token may be consumed per Accept
+	// call regardless of how many disallowed IPs were rejected inside it.
+	if tokens := limited.rateLimiter.Tokens(); tokens < 0.99 {
+		t.Fatalf("rate-limit tokens = %f, want >= 0.99 (rejected IPs must not burn tokens)", tokens)
+	}
+
+	if err := conn.Close(); err != nil {
+		t.Fatalf("close accepted conn: %v", err)
+	}
+	if stats.closed != 1 {
+		t.Fatalf("closed stats = %d, want 1", stats.closed)
+	}
+	if got := len(limited.limit); got != 0 {
+		t.Fatalf("connection slots held after close = %d, want 0", got)
+	}
+}
+
 type fakeStats struct {
 	accepted int
 	closed   int

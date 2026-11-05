@@ -79,7 +79,9 @@ func (l *limitedListener) Close() error {
 
 // allowedIPsListener rejects connections from source IPs outside the
 // ALLOWED_IPS list before the SOCKS5 handshake begins, replacing the
-// SetIPWhitelist hook of the previous go-socks5 library.
+// SetIPWhitelist hook of the previous go-socks5 library. It is the
+// innermost listener wrapper so rejected connections never consume
+// rate-limit tokens, connection slots, or accepted-connection metrics.
 type allowedIPsListener struct {
 	net.Listener
 	allowed []net.IP

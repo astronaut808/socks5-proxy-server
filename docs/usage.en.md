@@ -10,6 +10,8 @@ Allow only specific domains (and their subdomains):
 ALLOWED_DEST_FQDN='^(.*\.)?(example\.com|internal\.local)$'
 ```
 
+Note: `ALLOWED_DEST_FQDN` filters the destination from the SOCKS5 request, but the server may still send a DNS query for the requested FQDN *before* the policy is evaluated (a limitation of the `things-go/go-socks5` library, which resolves names before applying rules). The policy therefore does not hide rejected names from the server's DNS resolver. Where this matters, use a trusted resolver and restrict the server's DNS egress at the network level (see [SECURITY.md](../SECURITY.md)).
+
 Allow only specific source IPs:
 
 ```bash
