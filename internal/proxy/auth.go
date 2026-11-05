@@ -9,7 +9,26 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-const dummyBcryptHash = "$2a$10$ddddddddddddddddddddddO8j/KBGxKZ5O3qkMBF9Lx9a9a9a9a9a"
+// dummyBcryptHash is a valid bcrypt hash generated once at first use. It lets
+// compareDummyPassword burn the same bcrypt cost for unknown/locked users as
+// for real ones, so timing does not reveal whether a username exists.
+var (
+	dummyBcryptHashOnce sync.Once
+	dummyBcryptHash     []byte
+)
+
+func getDummyBcryptHash() []byte {
+	dummyBcryptHashOnce.Do(func() {
+		hash, err := bcrypt.GenerateFromPassword([]byte("dummy"), bcrypt.DefaultCost)
+		if err != nil {
+			// bcrypt.DefaultCost is a valid cost, so this cannot realistically
+			// happen; failing here means auth is unusable anyway.
+			panic(fmt.Sprintf("generate dummy bcrypt hash: %v", err))
+		}
+		dummyBcryptHash = hash
+	})
+	return dummyBcryptHash
+}
 
 type AccountStore struct {
 	hashes      map[string][]byte
@@ -38,7 +57,10 @@ func NewAccountStore(accounts []string, user, password string, maxFailures int, 
 	}, nil
 }
 
-func (s *AccountStore) Valid(user, password string) bool {
+// Valid implements the things-go/go-socks5 CredentialStore interface. The
+// client address (userAddr) is currently not used: lockout state stays keyed
+// by username only, preserving the pre-migration behavior.
+func (s *AccountStore) Valid(user, password, _ string) bool {
 	now := time.Now()
 
 	hash, locked, known := s.snapshot(user, now)
@@ -52,8 +74,7 @@ func (s *AccountStore) Valid(user, password string) bool {
 		return false
 	}
 
-	s.resetFailures(user)
-	return true
+	return s.resetFailures(user)
 }
 
 func (s *AccountStore) snapshot(user string, now time.Time) ([]byte, bool, bool) {
@@ -72,6 +93,9 @@ func (s *AccountStore) recordFailure(user string, now time.Time) {
 	defer s.mu.Unlock()
 
 	failure := s.failures[user]
+	if now.Before(failure.lockedUntil) {
+		return
+	}
 	failure.count++
 	failure.lastFailed = now
 	if failure.count >= s.maxFailures {
@@ -81,10 +105,14 @@ func (s *AccountStore) recordFailure(user string, now time.Time) {
 	s.failures[user] = failure
 }
 
-func (s *AccountStore) resetFailures(user string) {
+func (s *AccountStore) resetFailures(user string) bool {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if time.Now().Before(s.failures[user].lockedUntil) {
+		return false
+	}
 	delete(s.failures, user)
-	s.mu.Unlock()
+	return true
 }
 
 func (s *AccountStore) cleanup(now time.Time) {
@@ -111,13 +139,13 @@ func loadAccounts(accounts []string, user, password string) (map[string][]byte, 
 		return hashes, nil
 	}
 
-	for _, account := range accounts {
+	for i, account := range accounts {
 		if strings.TrimSpace(account) == "" {
 			continue
 		}
 		name, hash, err := parseAccount(account)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("PROXY_ACCOUNTS entry %d: %w", i+1, err)
 		}
 		if _, exists := hashes[name]; exists {
 			return nil, fmt.Errorf("duplicate PROXY_ACCOUNTS user %q", name)
@@ -133,15 +161,18 @@ func loadAccounts(accounts []string, user, password string) (map[string][]byte, 
 func parseAccount(account string) (string, []byte, error) {
 	user, secret, ok := strings.Cut(account, ":")
 	if !ok {
-		return "", nil, fmt.Errorf("invalid PROXY_ACCOUNTS entry %q, expected user:password-or-bcrypt-hash", account)
+		return "", nil, fmt.Errorf("expected user:password-or-bcrypt-hash")
 	}
 
 	user = strings.TrimSpace(user)
 	secret = strings.TrimSpace(secret)
 	if user == "" || secret == "" {
-		return "", nil, fmt.Errorf("invalid PROXY_ACCOUNTS entry %q", account)
+		return "", nil, fmt.Errorf("username and password must not be empty")
 	}
 	if isBcryptHash(secret) {
+		if err := validateBcryptHash(secret); err != nil {
+			return "", nil, err
+		}
 		return user, []byte(secret), nil
 	}
 
@@ -150,6 +181,21 @@ func parseAccount(account string) (string, []byte, error) {
 		return "", nil, fmt.Errorf("hash password for %q: %w", user, err)
 	}
 	return user, hash, nil
+}
+
+func validateBcryptHash(hash string) error {
+	if len(hash) != 60 || hash[6] != '$' {
+		return fmt.Errorf("invalid bcrypt hash format")
+	}
+	if _, err := bcrypt.Cost([]byte(hash)); err != nil {
+		return fmt.Errorf("invalid bcrypt hash cost")
+	}
+	for _, c := range hash[7:] {
+		if !strings.ContainsRune("./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789", c) {
+			return fmt.Errorf("invalid bcrypt hash encoding")
+		}
+	}
+	return nil
 }
 
 func isBcryptHash(value string) bool {
@@ -163,5 +209,5 @@ func hashPassword(password string) ([]byte, error) {
 }
 
 func compareDummyPassword(password string) {
-	_ = bcrypt.CompareHashAndPassword([]byte(dummyBcryptHash), []byte(password))
+	_ = bcrypt.CompareHashAndPassword(getDummyBcryptHash(), []byte(password))
 }

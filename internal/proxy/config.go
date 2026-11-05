@@ -18,6 +18,7 @@ type Config struct {
 	Accounts        []string `env:"PROXY_ACCOUNTS" env-separator:","`
 	RequireAuth     bool     `env:"REQUIRE_AUTH" env-default:"true"`
 	EnablePlain     bool     `env:"ENABLE_PLAIN" env-default:"false"`
+	EnableUDP       bool     `env:"ENABLE_UDP_ASSOCIATE" env-default:"false"`
 	AllowedFQDN     string   `env:"ALLOWED_DEST_FQDN"`
 	AllowedIPs      []string `env:"ALLOWED_IPS" env-separator:","`
 	MaxConnections  int      `env:"MAX_CONNECTIONS" env-default:"100"`

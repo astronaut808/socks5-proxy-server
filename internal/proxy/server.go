@@ -9,11 +9,14 @@ import (
 	"net"
 	"os"
 	"sync"
+	"time"
 
-	"github.com/armon/go-socks5"
+	socks5 "github.com/things-go/go-socks5"
 )
 
 func Run(ctx context.Context, cfg Config, logger *log.Logger) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	if logger == nil {
 		logger = log.New(os.Stdout, "", log.LstdFlags)
 	}
@@ -21,17 +24,19 @@ func Run(ctx context.Context, cfg Config, logger *log.Logger) error {
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
 	if cfg.MetricsAddr != "" {
-		if err := startMetrics(ctx, cfg.MetricsAddr, logger); err != nil {
+		stopMetrics, err := startMetrics(cfg.MetricsAddr, logger)
+		if err != nil {
 			return err
 		}
+		defer stopMetrics()
 	}
 
-	server, err := buildServer(cfg, logger)
+	server, err := buildServer(ctx, cfg, logger)
 	if err != nil {
 		return err
 	}
 
-	listeners, err := openListeners(cfg, defaultMetrics)
+	listeners, err := openListeners(cfg, defaultMetrics, logger)
 	if err != nil {
 		return err
 	}
@@ -40,9 +45,12 @@ func Run(ctx context.Context, cfg Config, logger *log.Logger) error {
 	return serve(ctx, server, listeners, logger)
 }
 
-func buildServer(cfg Config, logger *log.Logger) (*socks5.Server, error) {
-	socksConfig := &socks5.Config{
-		Logger: log.New(logger.Writer(), "[SOCKS5] ", logger.Flags()),
+func buildServer(ctx context.Context, cfg Config, logger *log.Logger) (*socks5.Server, error) {
+	upstream := upstreamNetwork{ctx: ctx, timeout: cfg.TimeoutDuration()}
+	options := []socks5.Option{
+		socks5.WithLogger(socks5.NewLogger(log.New(logger.Writer(), "[SOCKS5] ", logger.Flags()))),
+		socks5.WithDial(upstream.Dial),
+		socks5.WithResolver(upstream),
 	}
 
 	if cfg.RequireAuth {
@@ -56,32 +64,29 @@ func buildServer(cfg Config, logger *log.Logger) (*socks5.Server, error) {
 		if err != nil {
 			return nil, fmt.Errorf("configure authentication: %w", err)
 		}
-		socksConfig.AuthMethods = []socks5.Authenticator{
-			socks5.UserPassAuthenticator{Credentials: store},
-		}
+		options = append(options, socks5.WithCredential(store))
 	} else {
 		logger.Println("Warning: proxy running without authentication")
 	}
 
+	var rules socks5.RuleSet
 	if cfg.AllowedFQDN != "" {
 		policy, err := NewDestinationPolicy(cfg.AllowedFQDN, logger)
 		if err != nil {
 			return nil, fmt.Errorf("configure destination policy: %w", err)
 		}
-		socksConfig.Rules = policy
+		rules = policy
 	}
+	options = append(options, socks5.WithRule(commandPolicy{
+		allowUDP: cfg.EnableUDP,
+		next:     rules,
+		logger:   logger,
+	}))
 
-	server, err := socks5.New(socksConfig)
-	if err != nil {
-		return nil, fmt.Errorf("create SOCKS5 server: %w", err)
-	}
-	if len(cfg.AllowedIPs) > 0 {
-		server.SetIPWhitelist(parseIPs(cfg.AllowedIPs))
-	}
-	return server, nil
+	return socks5.NewServer(options...), nil
 }
 
-func openListeners(cfg Config, stats listenerStats) ([]net.Listener, error) {
+func openListeners(cfg Config, stats listenerStats, logger *log.Logger) ([]net.Listener, error) {
 	var listeners []net.Listener
 
 	if cfg.PlainEnabled() {
@@ -89,13 +94,7 @@ func openListeners(cfg Config, stats listenerStats) ([]net.Listener, error) {
 		if err != nil {
 			return nil, fmt.Errorf("listen on %s: %w", cfg.PlainAddr(), err)
 		}
-		listeners = append(listeners, newLimitedListener(
-			listener,
-			cfg.MaxConnections,
-			cfg.RateLimit,
-			cfg.TimeoutDuration(),
-			stats,
-		))
+		listeners = append(listeners, wrapListener(listener, cfg, stats, logger))
 	}
 
 	if cfg.TLS.Enabled {
@@ -110,13 +109,7 @@ func openListeners(cfg Config, stats listenerStats) ([]net.Listener, error) {
 			closeAll(listeners)
 			return nil, fmt.Errorf("listen on TLS %s: %w", cfg.TLSAddr(), err)
 		}
-		listeners = append(listeners, newLimitedListener(
-			listener,
-			cfg.MaxConnections,
-			cfg.RateLimit,
-			cfg.TimeoutDuration(),
-			stats,
-		))
+		listeners = append(listeners, wrapListener(listener, cfg, stats, logger))
 	}
 
 	if len(listeners) == 0 {
@@ -125,30 +118,93 @@ func openListeners(cfg Config, stats listenerStats) ([]net.Listener, error) {
 	return listeners, nil
 }
 
+// wrapListener applies connection limits and rate limiting, then the
+// ALLOWED_IPS source filter as the outermost layer. The filter replaces the
+// IP whitelist hook of the previous go-socks5 library, which has no
+// equivalent in things-go/go-socks5.
+func wrapListener(listener net.Listener, cfg Config, stats listenerStats, logger *log.Logger) net.Listener {
+	limited := newLimitedListener(
+		listener,
+		cfg.MaxConnections,
+		cfg.RateLimit,
+		cfg.TimeoutDuration(),
+		stats,
+	)
+	if len(cfg.AllowedIPs) > 0 {
+		return newAllowedIPsListener(limited, parseIPs(cfg.AllowedIPs), logger)
+	}
+	return limited
+}
+
 func serve(ctx context.Context, server *socks5.Server, listeners []net.Listener, logger *log.Logger) error {
 	var wg sync.WaitGroup
+	var mu sync.Mutex
+	connections := make(map[net.Conn]struct{})
+	changed := make(chan struct{}, 1)
 	errs := make(chan error, len(listeners))
 	stop := sync.OnceFunc(func() {
 		closeAll(listeners)
 	})
 
-	go func() {
-		<-ctx.Done()
-		stop()
-	}()
+	stopCancellation := context.AfterFunc(ctx, stop)
+	defer stopCancellation()
+	defer stop()
 
 	for _, listener := range listeners {
 		wg.Add(1)
 		go func(listener net.Listener) {
 			defer wg.Done()
-			if err := server.Serve(listener); err != nil && !errors.Is(err, net.ErrClosed) {
-				errs <- err
-				stop()
+			for {
+				conn, err := listener.Accept()
+				if err != nil {
+					if !errors.Is(err, net.ErrClosed) {
+						errs <- err
+					}
+					stop()
+					return
+				}
+				mu.Lock()
+				connections[conn] = struct{}{}
+				mu.Unlock()
+				go func() {
+					// ServeConn closes the connection itself (defer in the
+					// library); limitedConn.Close stays idempotent regardless.
+					_ = server.ServeConn(conn)
+					mu.Lock()
+					delete(connections, conn)
+					mu.Unlock()
+					select {
+					case changed <- struct{}{}:
+					default:
+					}
+				}()
 			}
 		}(listener)
 	}
 
 	wg.Wait()
+	// Give established streams time to finish, then release all client sockets.
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+drain:
+	for {
+		mu.Lock()
+		remaining := len(connections)
+		mu.Unlock()
+		if remaining == 0 {
+			break
+		}
+		select {
+		case <-changed:
+		case <-deadline.C:
+			mu.Lock()
+			for conn := range connections {
+				_ = conn.Close()
+			}
+			mu.Unlock()
+			break drain
+		}
+	}
 	close(errs)
 	for err := range errs {
 		return fmt.Errorf("serve SOCKS5: %w", err)

@@ -23,7 +23,6 @@ func buildTLSConfig(cfg TLSConfig) (*tls.Config, error) {
 		MinVersion:             minVersion,
 		ClientAuth:             tls.NoClientCert,
 		SessionTicketsDisabled: true,
-		NextProtos:             []string{"h2", "http/1.1"},
 		CurvePreferences: []tls.CurveID{
 			tls.X25519,
 			tls.CurveP256,

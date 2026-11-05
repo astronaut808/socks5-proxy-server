@@ -2,6 +2,8 @@ package proxy
 
 import (
 	"errors"
+	"io"
+	"log"
 	"net"
 	"testing"
 	"time"
@@ -33,6 +35,35 @@ func TestLimitedConnCloseIsIdempotent(t *testing.T) {
 	case <-released:
 		t.Fatal("release called twice")
 	default:
+	}
+}
+
+func TestLimitedListenerCloseUnblocksAccept(t *testing.T) {
+	for _, blockedBy := range []string{"connections", "rate"} {
+		t.Run(blockedBy, func(t *testing.T) {
+			ln := newLimitedListener(&pipeListener{once: true}, 1, 1, time.Second, nil)
+			if blockedBy == "connections" {
+				ln.limit <- struct{}{}
+			} else {
+				ln.rateLimiter.AllowN(time.Now(), 2)
+			}
+			done := make(chan error, 1)
+			go func() { _, err := ln.Accept(); done <- err }()
+			if err := ln.Close(); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case err := <-done:
+				if !errors.Is(err, net.ErrClosed) {
+					t.Fatalf("Accept: %v", err)
+				}
+			case <-time.After(200 * time.Millisecond):
+				if blockedBy == "connections" {
+					<-ln.limit
+				}
+				t.Fatalf("Close did not unblock Accept (Accept returned: %v)", <-done)
+			}
+		})
 	}
 }
 
@@ -87,6 +118,142 @@ func TestLimitedListenerAcceptWrapsConnection(t *testing.T) {
 	}
 	if stats.closed != 1 {
 		t.Fatalf("closed stats = %d, want 1", stats.closed)
+	}
+}
+
+type remoteAddrConn struct {
+	net.Conn
+	remote net.Addr
+	closed chan struct{}
+}
+
+func (c *remoteAddrConn) RemoteAddr() net.Addr {
+	return c.remote
+}
+
+func (c *remoteAddrConn) Close() error {
+	select {
+	case <-c.closed:
+	default:
+		close(c.closed)
+	}
+	return c.Conn.Close()
+}
+
+type queueListener struct {
+	conns []net.Conn
+}
+
+func (l *queueListener) Accept() (net.Conn, error) {
+	if len(l.conns) == 0 {
+		return nil, net.ErrClosed
+	}
+	conn := l.conns[0]
+	l.conns = l.conns[1:]
+	return conn, nil
+}
+
+func (l *queueListener) Close() error {
+	return nil
+}
+
+func (l *queueListener) Addr() net.Addr {
+	return pipeAddr("queue")
+}
+
+func newRemoteAddrConn(t *testing.T, remote net.Addr) *remoteAddrConn {
+	t.Helper()
+	server, client := net.Pipe()
+	t.Cleanup(func() { _ = server.Close() })
+	return &remoteAddrConn{
+		Conn:   client,
+		remote: remote,
+		closed: make(chan struct{}),
+	}
+}
+
+func TestAllowedIPsListenerAcceptsAllowedIP(t *testing.T) {
+	conn := newRemoteAddrConn(t, &net.TCPAddr{IP: net.ParseIP("192.0.2.1"), Port: 1234})
+	listener := newAllowedIPsListener(
+		&queueListener{conns: []net.Conn{conn}},
+		[]net.IP{net.ParseIP("192.0.2.1")},
+		log.New(io.Discard, "", 0),
+	)
+
+	accepted, err := listener.Accept()
+	if err != nil {
+		t.Fatalf("accept: %v", err)
+	}
+	if accepted != conn {
+		t.Fatal("accepted connection is not the queued one")
+	}
+	select {
+	case <-conn.closed:
+		t.Fatal("allowed connection was closed")
+	default:
+	}
+}
+
+func TestAllowedIPsListenerRejectsDisallowedIP(t *testing.T) {
+	rejected := newRemoteAddrConn(t, &net.TCPAddr{IP: net.ParseIP("198.51.100.1"), Port: 1})
+	allowed := newRemoteAddrConn(t, &net.TCPAddr{IP: net.ParseIP("192.0.2.1"), Port: 2})
+	listener := newAllowedIPsListener(
+		&queueListener{conns: []net.Conn{rejected, allowed}},
+		[]net.IP{net.ParseIP("192.0.2.1")},
+		log.New(io.Discard, "", 0),
+	)
+
+	accepted, err := listener.Accept()
+	if err != nil {
+		t.Fatalf("accept: %v", err)
+	}
+	if accepted != allowed {
+		t.Fatal("accepted connection is not the allowed one")
+	}
+	select {
+	case <-rejected.closed:
+	case <-time.After(time.Second):
+		t.Fatal("rejected connection was not closed")
+	}
+}
+
+func TestAllowedIPsListenerRejectsMalformedRemoteAddr(t *testing.T) {
+	rejected := newRemoteAddrConn(t, pipeAddr("not-an-ip"))
+	allowed := newRemoteAddrConn(t, &net.TCPAddr{IP: net.ParseIP("192.0.2.1"), Port: 3})
+	listener := newAllowedIPsListener(
+		&queueListener{conns: []net.Conn{rejected, allowed}},
+		[]net.IP{net.ParseIP("192.0.2.1")},
+		log.New(io.Discard, "", 0),
+	)
+
+	accepted, err := listener.Accept()
+	if err != nil {
+		t.Fatalf("accept: %v", err)
+	}
+	if accepted != allowed {
+		t.Fatal("accepted connection is not the allowed one")
+	}
+	select {
+	case <-rejected.closed:
+	case <-time.After(time.Second):
+		t.Fatal("malformed connection was not closed")
+	}
+}
+
+func TestAllowedIPsListenerWithoutLogger(t *testing.T) {
+	rejected := newRemoteAddrConn(t, &net.TCPAddr{IP: net.ParseIP("198.51.100.1"), Port: 1})
+	listener := newAllowedIPsListener(
+		&queueListener{conns: []net.Conn{rejected}},
+		[]net.IP{net.ParseIP("192.0.2.1")},
+		nil,
+	)
+	if _, err := listener.Accept(); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("accept: %v, want %v", err, net.ErrClosed)
+	}
+	select {
+	case <-rejected.closed:
+	case <-time.After(time.Second):
+		t.Fatal("rejected connection was not closed")
 	}
 }
 
