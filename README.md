@@ -4,7 +4,7 @@
 
 ![Build and Push Docker image](https://github.com/astronaut808/socks5-proxy-server/actions/workflows/docker.yml/badge.svg)
 
-Небольшой SOCKS5 proxy server на `go-socks5` и Go 1.27.3. Поддерживает аутентификацию по логину и паролю, несколько аккаунтов, allowlist по исходным IP, политики доступа по FQDN назначения, лимиты соединений, rate limiting, обычный SOCKS5, SOCKS5 over TLS и опциональный mutual TLS.
+Небольшой SOCKS5 proxy server на `go-socks5` и современном Go (версия — в `go.mod`). Поддерживает аутентификацию по логину и паролю, несколько аккаунтов, allowlist по исходным IP, политики доступа по FQDN назначения, лимиты соединений, rate limiting, обычный SOCKS5, SOCKS5 over TLS и опциональный mutual TLS.
 
 ## Быстрый старт
 
