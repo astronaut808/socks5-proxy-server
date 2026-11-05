@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -10,10 +11,10 @@ import (
 func TestAccountStoreAcceptsPlainPassword(t *testing.T) {
 	store := newStore(t, []string{"alice:secret"}, "", "")
 
-	if !store.Valid("alice", "secret") {
+	if !store.Valid("alice", "secret", "") {
 		t.Fatal("valid credentials rejected")
 	}
-	if store.Valid("alice", "wrong") {
+	if store.Valid("alice", "wrong", "") {
 		t.Fatal("invalid password accepted")
 	}
 }
@@ -25,14 +26,14 @@ func TestAccountStoreAcceptsBcryptHash(t *testing.T) {
 	}
 
 	store := newStore(t, []string{"carol:" + string(hash)}, "", "")
-	if !store.Valid("carol", "hunter2") {
+	if !store.Valid("carol", "hunter2", "") {
 		t.Fatal("bcrypt credentials rejected")
 	}
 }
 
 func TestAccountStoreDefaultAccount(t *testing.T) {
 	store := newStore(t, nil, "karen", "password")
-	if !store.Valid("karen", "password") {
+	if !store.Valid("karen", "password", "") {
 		t.Fatal("default credentials rejected")
 	}
 }
@@ -43,14 +44,14 @@ func TestAccountStoreLockout(t *testing.T) {
 		t.Fatalf("new account store: %v", err)
 	}
 
-	_ = store.Valid("bob", "wrong")
-	_ = store.Valid("bob", "wrong")
-	if store.Valid("bob", "secret") {
+	_ = store.Valid("bob", "wrong", "")
+	_ = store.Valid("bob", "wrong", "")
+	if store.Valid("bob", "secret", "") {
 		t.Fatal("locked account accepted")
 	}
 
 	time.Sleep(15 * time.Millisecond)
-	if !store.Valid("bob", "secret") {
+	if !store.Valid("bob", "secret", "") {
 		t.Fatal("credentials rejected after lockout expired")
 	}
 }
@@ -59,7 +60,7 @@ func TestUnknownUsersDoNotGrowFailureState(t *testing.T) {
 	store := newStore(t, []string{"alice:secret"}, "", "")
 
 	for i := 0; i < 3; i++ {
-		_ = store.Valid("unknown", "wrong")
+		_ = store.Valid("unknown", "wrong", "")
 	}
 
 	store.mu.Lock()
@@ -75,9 +76,9 @@ func TestExpiredFailuresAreCleaned(t *testing.T) {
 		t.Fatalf("new account store: %v", err)
 	}
 
-	_ = store.Valid("alice", "wrong")
+	_ = store.Valid("alice", "wrong", "")
 	time.Sleep(2 * time.Millisecond)
-	_ = store.Valid("alice", "wrong-again")
+	_ = store.Valid("alice", "wrong-again", "")
 
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -87,16 +88,28 @@ func TestExpiredFailuresAreCleaned(t *testing.T) {
 }
 
 func TestAccountParsingRejectsBadEntries(t *testing.T) {
-	tests := []string{
-		"missing-separator",
-		":secret",
-		"alice:",
-		"alice:secret",
-		"alice:other",
+	tests := [][]string{
+		{"missing-separator"},
+		{":secret"},
+		{"alice:"},
+		{"alice:secret", "alice:other"},
+		{"alice:$2a$invalid"},
+		{"alice:$2b$99$" + strings.Repeat("a", 53)},
+		{"alice:$2y$10$" + strings.Repeat("!", 53)},
 	}
+	for _, accounts := range tests {
+		if _, err := NewAccountStore(accounts, "", "", 3, time.Minute); err == nil {
+			t.Errorf("invalid accounts accepted: %q", accounts)
+		}
+	}
+}
 
-	if _, err := NewAccountStore(tests, "", "", 3, time.Minute); err == nil {
-		t.Fatal("expected duplicate user error")
+func TestAccountErrorsDoNotExposeSecrets(t *testing.T) {
+	for _, account := range []string{":audit-secret", "audit-secret"} {
+		_, err := NewAccountStore([]string{account}, "", "", 3, time.Minute)
+		if err == nil || strings.Contains(err.Error(), "audit-secret") {
+			t.Fatalf("unsafe error: %v", err)
+		}
 	}
 }
 

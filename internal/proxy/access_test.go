@@ -6,7 +6,8 @@ import (
 	"log"
 	"testing"
 
-	"github.com/armon/go-socks5"
+	socks5 "github.com/things-go/go-socks5"
+	"github.com/things-go/go-socks5/statute"
 )
 
 func TestDestinationPolicy(t *testing.T) {
@@ -27,13 +28,58 @@ func TestDestinationPolicy(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			policy := mustDestinationPolicy(t, tt.pattern)
-			req := &socks5.Request{DestAddr: &socks5.AddrSpec{FQDN: tt.fqdn}}
+			req := &socks5.Request{DestAddr: &statute.AddrSpec{FQDN: tt.fqdn}}
 
 			_, got := policy.Allow(context.Background(), req)
 			if got != tt.want {
 				t.Fatalf("Allow() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestCommandPolicyUDPAssociate(t *testing.T) {
+	tests := []struct {
+		name     string
+		allowUDP bool
+		next     socks5.RuleSet
+		command  uint8
+		want     bool
+	}{
+		{name: "udp associate rejected by default", allowUDP: false, command: statute.CommandAssociate, want: false},
+		{name: "udp associate allowed when enabled", allowUDP: true, command: statute.CommandAssociate, want: true},
+		{name: "connect allowed by default", allowUDP: false, command: statute.CommandConnect, want: true},
+		{name: "connect allowed when udp enabled", allowUDP: true, command: statute.CommandConnect, want: true},
+		{name: "bind unaffected by udp flag", allowUDP: false, command: statute.CommandBind, want: true},
+		{name: "next policy still applies to connect", allowUDP: false, command: statute.CommandConnect, next: mustDestinationPolicy(t, "^example\\.com$"), want: false},
+		{name: "next policy still applies to udp associate", allowUDP: true, command: statute.CommandAssociate, next: mustDestinationPolicy(t, "^example\\.com$"), want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			policy := commandPolicy{
+				allowUDP: tt.allowUDP,
+				next:     tt.next,
+				logger:   log.New(io.Discard, "", 0),
+			}
+			req := &socks5.Request{
+				Request:  statute.Request{Command: tt.command},
+				DestAddr: &statute.AddrSpec{FQDN: "blocked.example"},
+			}
+
+			_, got := policy.Allow(context.Background(), req)
+			if got != tt.want {
+				t.Fatalf("Allow() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCommandPolicyWithoutLogger(t *testing.T) {
+	policy := commandPolicy{}
+	req := &socks5.Request{Request: statute.Request{Command: statute.CommandAssociate}, DestAddr: &statute.AddrSpec{}}
+	if _, got := policy.Allow(context.Background(), req); got {
+		t.Fatal("Allow() = true, want false")
 	}
 }
 

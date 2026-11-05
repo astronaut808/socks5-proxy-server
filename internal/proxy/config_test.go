@@ -26,6 +26,33 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if cfg.TLS.MinVersion != "1.2" {
 		t.Fatalf("TLS min version = %q, want 1.2", cfg.TLS.MinVersion)
 	}
+	if cfg.EnableUDP {
+		t.Fatal("UDP ASSOCIATE should be disabled by default")
+	}
+}
+
+func TestLoadConfigEnableUDPAssociate(t *testing.T) {
+	t.Setenv("PROXY_USER", "user")
+	t.Setenv("PROXY_PASSWORD", "password")
+	t.Setenv("ENABLE_UDP_ASSOCIATE", "true")
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if !cfg.EnableUDP {
+		t.Fatal("UDP ASSOCIATE should be enabled when ENABLE_UDP_ASSOCIATE=true")
+	}
+}
+
+func TestLoadConfigRejectsInvalidUDPAssociateValue(t *testing.T) {
+	t.Setenv("PROXY_USER", "user")
+	t.Setenv("PROXY_PASSWORD", "password")
+	t.Setenv("ENABLE_UDP_ASSOCIATE", "notabool")
+
+	if _, err := LoadConfig(); err == nil {
+		t.Fatal("expected boolean parsing error")
+	}
 }
 
 func TestLoadConfigLists(t *testing.T) {
