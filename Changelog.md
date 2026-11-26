@@ -8,10 +8,11 @@ All notable changes to this project will be documented in this file.
 - Opt-in `ENABLE_UDP_ASSOCIATE` setting (default `false`). With the new SOCKS5 library, enabling it provides full UDP ASSOCIATE relay support; existing configurations without the variable keep working with UDP disabled.
 
 ### Changed
-- Update the Go requirement and Docker build toolchain from 1.26.3 to 1.27.3.
+- Update the Go requirement and Docker build toolchain from 1.26.3 to 1.27.4.
 - Migrated the SOCKS5 dependency from `github.com/armon/go-socks5` with a `serjs` fork `replace` directive to `github.com/things-go/go-socks5` v0.1.4, used directly.
 - Moved `AllowedIPs` filtering to the listener layer.
 - Update module dependencies.
+- Update CI actions and security tooling, and explicitly select the Debian 13 Distroless runtime image.
 
 ### Removed
 - The stale `replace github.com/armon/go-socks5 => github.com/serjs/go-socks5` workaround in `go.mod`.

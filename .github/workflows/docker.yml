@@ -28,7 +28,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
           # cache отключён: workflow публикует артефакты (release build),
@@ -45,7 +45,7 @@ jobs:
           go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 config verify
           go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./...
       - name: Check reachable Go vulnerabilities
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
+        run: make vuln-check
 
   hadolint:
     name: Lint Dockerfile
@@ -74,7 +74,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Log in to GHCR
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

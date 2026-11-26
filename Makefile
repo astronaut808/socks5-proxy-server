@@ -1,5 +1,5 @@
 GITLEAKS_LOG_OPTS ?= HEAD
-GOVULNCHECK_VERSION ?= v1.9.0
+GOVULNCHECK_VERSION ?= v1.10.0
 ACTIONLINT_VERSION ?= v1.7.12
 
 .PHONY: test test-race vet build lint lint-docker lint-actions lint-actions-security vuln-check security security-fast
